@@ -116,6 +116,8 @@ def get_flight_price(origin, destination, departure_date):
 @bot.event
 async def on_ready():
     print(f"Bot is online as {bot.user}")
+    print(f"Amadeus API Key loaded: {'Yes' if AMADEUS_API_KEY else 'NO - MISSING!'}")
+    print(f"Amadeus API Secret loaded: {'Yes' if AMADEUS_API_SECRET else 'NO - MISSING!'}")
     init_db()
     if not check_prices.is_running():
         check_prices.start()
@@ -127,6 +129,9 @@ async def track_flight(ctx, origin: str, destination: str, departure_date: str, 
     Usage: !track <origin> <destination> <YYYY-MM-DD> [max_price]
     Example: !track JFK LAX 2025-03-15 300
     """
+    print(f"=== TRACK COMMAND RECEIVED ===")
+    print(f"User: {ctx.author}, Origin: {origin}, Dest: {destination}, Date: {departure_date}")
+    
     # Validate date format
     try:
         datetime.strptime(departure_date, "%Y-%m-%d")
