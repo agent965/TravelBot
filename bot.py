@@ -11,10 +11,11 @@ AMADEUS_API_KEY = os.getenv("AMADEUS_API_KEY")
 AMADEUS_API_SECRET = os.getenv("AMADEUS_API_SECRET")
 CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", 60))
 
-# Initialize Amadeus client
+# Initialize Amadeus client (test environment)
 amadeus = Client(
     client_id=AMADEUS_API_KEY,
-    client_secret=AMADEUS_API_SECRET
+    client_secret=AMADEUS_API_SECRET,
+    hostname='test'
 )
 
 # Initialize Discord bot
@@ -115,9 +116,11 @@ def get_flight_price(origin, destination, departure_date):
 
 @bot.event
 async def on_ready():
-    print(f"Bot is online as {bot.user}")
-    print(f"Amadeus API Key loaded: {'Yes' if AMADEUS_API_KEY else 'NO - MISSING!'}")
-    print(f"Amadeus API Secret loaded: {'Yes' if AMADEUS_API_SECRET else 'NO - MISSING!'}")
+    import sys
+    print(f"Bot is online as {bot.user}", flush=True)
+    print(f"Amadeus API Key loaded: {'Yes' if AMADEUS_API_KEY else 'NO - MISSING!'}", flush=True)
+    print(f"Amadeus API Secret loaded: {'Yes' if AMADEUS_API_SECRET else 'NO - MISSING!'}", flush=True)
+    sys.stdout.flush()
     init_db()
     if not check_prices.is_running():
         check_prices.start()
