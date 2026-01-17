@@ -89,6 +89,7 @@ def update_last_price(alert_id, price):
 def get_flight_price(origin, destination, departure_date):
     """Fetch the cheapest flight price from Amadeus API."""
     try:
+        print(f"Searching flights: {origin} -> {destination} on {departure_date}")
         response = amadeus.shopping.flight_offers_search.get(
             originLocationCode=origin,
             destinationLocationCode=destination,
@@ -98,10 +99,18 @@ def get_flight_price(origin, destination, departure_date):
             currencyCode="USD"
         )
         if response.data:
-            return float(response.data[0]["price"]["total"])
+            price = float(response.data[0]["price"]["total"])
+            print(f"Found price: ${price}")
+            return price
+        print("No flight data returned")
         return None
     except ResponseError as e:
         print(f"Amadeus API error: {e}")
+        print(f"Status code: {e.response.status_code}")
+        print(f"Result: {e.response.result}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error: {type(e).__name__}: {e}")
         return None
 
 @bot.event
