@@ -2,21 +2,13 @@ import discord
 from discord.ext import commands, tasks
 import sqlite3
 import os
+import requests
 from datetime import datetime
-from amadeus import Client, ResponseError
 
 # Configuration
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-AMADEUS_API_KEY = os.getenv("AMADEUS_API_KEY")
-AMADEUS_API_SECRET = os.getenv("AMADEUS_API_SECRET")
-CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", 60))
-
-# Initialize Amadeus client (test environment)
-amadeus = Client(
-    client_id=AMADEUS_API_KEY,
-    client_secret=AMADEUS_API_SECRET,
-    hostname='test'
-)
+SERPAPI_KEY = os.getenv("SERPAPI_KEY")
+CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", 360))  # Default 6 hours to conserve API calls
 
 # Initialize Discord bot
 intents = discord.Intents.default()
@@ -88,39 +80,50 @@ def update_last_price(alert_id, price):
     conn.close()
 
 def get_flight_price(origin, destination, departure_date):
-    """Fetch the cheapest flight price from Amadeus API."""
+    """Fetch the cheapest flight price from Google Flights via SerpApi."""
     try:
-        print(f"Searching flights: {origin} -> {destination} on {departure_date}")
-        response = amadeus.shopping.flight_offers_search.get(
-            originLocationCode=origin,
-            destinationLocationCode=destination,
-            departureDate=departure_date,
-            adults=1,
-            max=1,
-            currencyCode="USD"
-        )
-        if response.data:
-            price = float(response.data[0]["price"]["total"])
-            print(f"Found price: ${price}")
-            return price
-        print("No flight data returned")
+        print(f"Searching flights: {origin} -> {destination} on {departure_date}", flush=True)
+        
+        params = {
+            "engine": "google_flights",
+            "departure_id": origin.upper(),
+            "arrival_id": destination.upper(),
+            "outbound_date": departure_date,
+            "currency": "USD",
+            "hl": "en",
+            "type": "2",  # One-way flight
+            "api_key": SERPAPI_KEY
+        }
+        
+        response = requests.get("https://serpapi.com/search", params=params)
+        data = response.json()
+        
+        if "error" in data:
+            print(f"SerpApi error: {data['error']}", flush=True)
+            return None
+        
+        # Get best flights or other flights
+        flights = data.get("best_flights", []) or data.get("other_flights", [])
+        
+        if flights and len(flights) > 0:
+            # Get the cheapest price
+            price = flights[0].get("price")
+            if price:
+                print(f"Found price: ${price}", flush=True)
+                return float(price)
+        
+        print("No flight data returned", flush=True)
         return None
-    except ResponseError as e:
-        print(f"Amadeus API error: {e}")
-        print(f"Status code: {e.response.status_code}")
-        print(f"Result: {e.response.result}")
-        return None
+        
     except Exception as e:
-        print(f"Unexpected error: {type(e).__name__}: {e}")
+        print(f"Unexpected error: {type(e).__name__}: {e}", flush=True)
         return None
 
 @bot.event
 async def on_ready():
-    import sys
     print(f"Bot is online as {bot.user}", flush=True)
-    print(f"Amadeus API Key loaded: {'Yes' if AMADEUS_API_KEY else 'NO - MISSING!'}", flush=True)
-    print(f"Amadeus API Secret loaded: {'Yes' if AMADEUS_API_SECRET else 'NO - MISSING!'}", flush=True)
-    sys.stdout.flush()
+    print(f"SerpApi Key loaded: {'Yes' if SERPAPI_KEY else 'NO - MISSING!'}", flush=True)
+    print(f"Check interval: {CHECK_INTERVAL_MINUTES} minutes", flush=True)
     init_db()
     if not check_prices.is_running():
         check_prices.start()
@@ -132,8 +135,8 @@ async def track_flight(ctx, origin: str, destination: str, departure_date: str, 
     Usage: !track <origin> <destination> <YYYY-MM-DD> [max_price]
     Example: !track JFK LAX 2025-03-15 300
     """
-    print(f"=== TRACK COMMAND RECEIVED ===")
-    print(f"User: {ctx.author}, Origin: {origin}, Dest: {destination}, Date: {departure_date}")
+    print(f"=== TRACK COMMAND RECEIVED ===", flush=True)
+    print(f"User: {ctx.author}, Origin: {origin}, Dest: {destination}, Date: {departure_date}", flush=True)
     
     # Validate date format
     try:
@@ -148,6 +151,7 @@ async def track_flight(ctx, origin: str, destination: str, departure_date: str, 
         return
     
     # Check current price
+    await ctx.send(f"🔍 Searching for flights {origin.upper()} → {destination.upper()}...")
     current_price = get_flight_price(origin.upper(), destination.upper(), departure_date)
     
     alert_id = add_alert(
@@ -217,7 +221,7 @@ async def check_now(ctx):
         await ctx.send("You have no active alerts to check.")
         return
     
-    await ctx.send("🔍 Checking prices...")
+    await ctx.send("🔍 Checking prices... (this uses API calls)")
     
     for alert in alerts:
         alert_id, user_id, channel_id, origin, dest, date, max_price, last_price, created = alert
@@ -237,9 +241,26 @@ async def check_now(ctx):
         else:
             await ctx.send(f"**{origin} → {dest}** ({date}): Could not fetch price")
 
+@bot.command(name="usage")
+async def check_usage(ctx):
+    """Check how many API calls you might be using."""
+    alerts = get_all_alerts()
+    checks_per_day = (24 * 60) / CHECK_INTERVAL_MINUTES
+    daily_usage = len(alerts) * checks_per_day
+    monthly_usage = daily_usage * 30
+    
+    await ctx.send(
+        f"📊 **API Usage Estimate**\n"
+        f"Active alerts: {len(alerts)}\n"
+        f"Check interval: every {CHECK_INTERVAL_MINUTES} minutes\n"
+        f"Est. daily API calls: ~{daily_usage:.0f}\n"
+        f"Est. monthly API calls: ~{monthly_usage:.0f}/250"
+    )
+
 @tasks.loop(minutes=CHECK_INTERVAL_MINUTES)
 async def check_prices():
     """Background task to check all flight prices periodically."""
+    print(f"=== SCHEDULED PRICE CHECK ===", flush=True)
     alerts = get_all_alerts()
     
     for alert in alerts:
@@ -285,7 +306,7 @@ async def check_prices():
                         f"{notification_reason}"
                     )
             except Exception as e:
-                print(f"Error sending notification: {e}")
+                print(f"Error sending notification: {e}", flush=True)
 
 @check_prices.before_loop
 async def before_check_prices():
@@ -321,11 +342,17 @@ async def flight_help(ctx):
         inline=False
     )
     embed.add_field(
+        name="!usage",
+        value="See estimated API usage",
+        inline=False
+    )
+    embed.add_field(
         name="📋 Notes",
         value=f"• Use 3-letter airport codes (JFK, LAX, LHR, etc.)\n"
               f"• Dates must be in YYYY-MM-DD format\n"
               f"• Prices checked every {CHECK_INTERVAL_MINUTES} minutes\n"
-              f"• You'll be pinged when prices drop >5% or hit your target",
+              f"• You'll be pinged when prices drop >5% or hit your target\n"
+              f"• Free tier: 250 searches/month - use wisely!",
         inline=False
     )
     
@@ -333,10 +360,10 @@ async def flight_help(ctx):
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
-        print("Error: DISCORD_TOKEN environment variable not set")
+        print("Error: DISCORD_TOKEN environment variable not set", flush=True)
         exit(1)
-    if not AMADEUS_API_KEY or not AMADEUS_API_SECRET:
-        print("Error: AMADEUS_API_KEY and AMADEUS_API_SECRET must be set")
+    if not SERPAPI_KEY:
+        print("Error: SERPAPI_KEY must be set", flush=True)
         exit(1)
     
     bot.run(DISCORD_TOKEN)
