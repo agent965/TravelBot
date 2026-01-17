@@ -1,4 +1,4 @@
-# ✈️ Flight Alert Discord Bot
+# Flight Alert Discord Bot!!
 
 A Discord bot that tracks flight prices and alerts you when they drop.
 
@@ -29,7 +29,7 @@ A Discord bot that tracks flight prices and alerts you when they drop.
 3. Go to "Bot" in the sidebar
 4. Click "Reset Token" and copy your token (save it!)
 5. Enable these Privileged Gateway Intents:
-   - MESSAGE CONTENT INTENT ✅
+   - MESSAGE CONTENT INTENT 
 6. Go to "OAuth2" → "URL Generator"
    - Scopes: `bot`
    - Bot Permissions: `Send Messages`, `Embed Links`, `Read Message History`
@@ -37,7 +37,7 @@ A Discord bot that tracks flight prices and alerts you when they drop.
 
 ### 2. Get Amadeus API Credentials
 
-You should already have these. You need both:
+You need both:
 - API Key
 - API Secret
 
