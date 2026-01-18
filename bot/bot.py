@@ -144,7 +144,7 @@ def update_last_price(alert_id, price):
     conn.close()
 
 def get_flight_price(origin, destination, departure_date):
-    """Fetch the cheapest flight price from Google Flights via SerpApi."""
+    """Fetch the cheapest flight details from Google Flights via SerpApi."""
     try:
         print(f"Searching flights: {origin} -> {destination} on {departure_date}", flush=True)
         
@@ -169,10 +169,46 @@ def get_flight_price(origin, destination, departure_date):
         flights = data.get("best_flights", []) or data.get("other_flights", [])
         
         if flights and len(flights) > 0:
-            price = flights[0].get("price")
+            flight = flights[0]
+            price = flight.get("price")
+            
             if price:
-                print(f"Found price: ${price}", flush=True)
-                return float(price)
+                # Get flight leg details
+                legs = flight.get("flights", [])
+                airline = "Unknown"
+                departure_time = ""
+                arrival_time = ""
+                duration = ""
+                stops = len(legs) - 1 if legs else 0
+                
+                if legs:
+                    first_leg = legs[0]
+                    airline = first_leg.get("airline", "Unknown")
+                    departure_time = first_leg.get("departure_airport", {}).get("time", "")
+                    
+                    last_leg = legs[-1]
+                    arrival_time = last_leg.get("arrival_airport", {}).get("time", "")
+                
+                # Get total duration
+                duration = flight.get("total_duration", 0)
+                hours = duration // 60
+                mins = duration % 60
+                duration_str = f"{hours}h {mins}m" if duration else ""
+                
+                # Build Google Flights link
+                booking_link = f"https://www.google.com/travel/flights?q=flights%20from%20{origin}%20to%20{destination}%20on%20{departure_date}"
+                
+                print(f"Found: ${price} on {airline} at {departure_time}", flush=True)
+                
+                return {
+                    "price": float(price),
+                    "airline": airline,
+                    "departure_time": departure_time,
+                    "arrival_time": arrival_time,
+                    "duration": duration_str,
+                    "stops": stops,
+                    "link": booking_link
+                }
         
         print("No flight data returned", flush=True)
         return None
@@ -219,25 +255,42 @@ async def track_flight(ctx, origin: str, destination: str, departure_date: str, 
     
     await ctx.send(f"🔍 Searching for flights {origin.upper()} → {destination.upper()}...")
     
-    # Get current price
-    current_price = get_flight_price(origin, destination, departure_date)
+    # Get current flight details
+    flight_data = get_flight_price(origin, destination, departure_date)
     
     # Create alert
     alert = add_alert(user['id'], origin, destination, departure_date, max_price)
     
-    if current_price:
-        update_last_price(alert['id'], current_price)
-        price_msg = f"Current price: **${current_price:.2f}**"
+    if flight_data:
+        update_last_price(alert['id'], flight_data['price'])
+        
+        stops_text = "Nonstop" if flight_data['stops'] == 0 else f"{flight_data['stops']} stop(s)"
+        
+        embed = discord.Embed(
+            title=f"✅ Now Tracking: {origin.upper()} → {destination.upper()}",
+            color=0x00ff00
+        )
+        embed.add_field(name="💰 Price", value=f"**${flight_data['price']:.2f}**", inline=True)
+        embed.add_field(name="✈️ Airline", value=flight_data['airline'], inline=True)
+        embed.add_field(name="🕐 Departure", value=flight_data['departure_time'] or "N/A", inline=True)
+        embed.add_field(name="🕐 Arrival", value=flight_data['arrival_time'] or "N/A", inline=True)
+        embed.add_field(name="⏱️ Duration", value=flight_data['duration'] or "N/A", inline=True)
+        embed.add_field(name="🛑 Stops", value=stops_text, inline=True)
+        
+        if max_price:
+            embed.add_field(name="🎯 Target Price", value=f"${max_price:.2f}", inline=True)
+        
+        embed.add_field(name="🔗 Book Now", value=f"[Google Flights]({flight_data['link']})", inline=False)
+        embed.set_footer(text=f"Alert ID: {alert['id'][:8]}... | Date: {departure_date}")
+        
+        await ctx.send(embed=embed)
     else:
-        price_msg = "Could not fetch price (will retry later)"
-    
-    max_msg = f" | Target: ≤${max_price:.2f}" if max_price else ""
-    
-    await ctx.send(
-        f"✅ Now tracking **{origin.upper()} → {destination.upper()}** on **{departure_date}**{max_msg}\n"
-        f"{price_msg}\n"
-        f"Alert ID: `{alert['id'][:8]}...`"
-    )
+        max_msg = f" | Target: ≤${max_price:.2f}" if max_price else ""
+        await ctx.send(
+            f"✅ Now tracking **{origin.upper()} → {destination.upper()}** on **{departure_date}**{max_msg}\n"
+            f"Could not fetch price (will retry later)\n"
+            f"Alert ID: `{alert['id'][:8]}...`"
+        )
 
 @bot.command(name="list")
 async def list_alerts(ctx):
@@ -296,21 +349,37 @@ async def check_now(ctx):
     
     for alert in alerts:
         date_str = alert['departureDate'].strftime("%Y-%m-%d")
-        price = get_flight_price(alert['origin'], alert['destination'], date_str)
+        flight_data = get_flight_price(alert['origin'], alert['destination'], date_str)
         
-        if price:
+        if flight_data:
             old_price = alert['lastPrice']
-            update_last_price(alert['id'], price)
+            update_last_price(alert['id'], flight_data['price'])
             
             change = ""
             if old_price:
-                diff = price - old_price
+                diff = flight_data['price'] - old_price
                 if diff < 0:
-                    change = f" (📉 ${abs(diff):.2f} lower!)"
+                    change = f"📉 ${abs(diff):.2f} lower!"
                 elif diff > 0:
-                    change = f" (📈 ${diff:.2f} higher)"
+                    change = f"📈 ${diff:.2f} higher"
             
-            await ctx.send(f"**{alert['origin']} → {alert['destination']}** ({date_str}): **${price:.2f}**{change}")
+            stops_text = "Nonstop" if flight_data['stops'] == 0 else f"{flight_data['stops']} stop(s)"
+            
+            embed = discord.Embed(
+                title=f"✈️ {alert['origin']} → {alert['destination']}",
+                color=0x00aaff
+            )
+            embed.add_field(name="💰 Price", value=f"**${flight_data['price']:.2f}**", inline=True)
+            embed.add_field(name="✈️ Airline", value=flight_data['airline'], inline=True)
+            embed.add_field(name="🕐 Departure", value=flight_data['departure_time'] or "N/A", inline=True)
+            embed.add_field(name="⏱️ Duration", value=flight_data['duration'] or "N/A", inline=True)
+            embed.add_field(name="🛑 Stops", value=stops_text, inline=True)
+            if change:
+                embed.add_field(name="📊 Change", value=change, inline=True)
+            embed.add_field(name="🔗 Book", value=f"[Google Flights]({flight_data['link']})", inline=False)
+            embed.set_footer(text=f"Date: {date_str}")
+            
+            await ctx.send(embed=embed)
         else:
             await ctx.send(f"**{alert['origin']} → {alert['destination']}** ({date_str}): Could not fetch")
 
@@ -340,11 +409,12 @@ async def check_prices():
     
     for alert in alerts:
         date_str = alert['departureDate'].strftime("%Y-%m-%d")
-        price = get_flight_price(alert['origin'], alert['destination'], date_str)
+        flight_data = get_flight_price(alert['origin'], alert['destination'], date_str)
         
-        if not price:
+        if not flight_data:
             continue
         
+        price = flight_data['price']
         should_notify = False
         reason = ""
         
@@ -364,12 +434,23 @@ async def check_prices():
                 discord_id = int(alert['name'].split(':')[1])
                 try:
                     user = await bot.fetch_user(discord_id)
-                    await user.send(
-                        f"✈️ **Flight Alert!**\n"
-                        f"**{alert['origin']} → {alert['destination']}** on **{date_str}**\n"
-                        f"Price: **${price:.2f}**\n"
-                        f"{reason}"
+                    
+                    stops_text = "Nonstop" if flight_data['stops'] == 0 else f"{flight_data['stops']} stop(s)"
+                    
+                    embed = discord.Embed(
+                        title=f"🚨 Flight Alert: {alert['origin']} → {alert['destination']}",
+                        description=reason,
+                        color=0x00ff00
                     )
+                    embed.add_field(name="💰 Price", value=f"**${price:.2f}**", inline=True)
+                    embed.add_field(name="✈️ Airline", value=flight_data['airline'], inline=True)
+                    embed.add_field(name="🕐 Departure", value=flight_data['departure_time'] or "N/A", inline=True)
+                    embed.add_field(name="⏱️ Duration", value=flight_data['duration'] or "N/A", inline=True)
+                    embed.add_field(name="🛑 Stops", value=stops_text, inline=True)
+                    embed.add_field(name="📅 Date", value=date_str, inline=True)
+                    embed.add_field(name="🔗 Book Now", value=f"[Google Flights]({flight_data['link']})", inline=False)
+                    
+                    await user.send(embed=embed)
                 except Exception as e:
                     print(f"Could not DM user: {e}", flush=True)
 
