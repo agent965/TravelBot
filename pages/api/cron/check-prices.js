@@ -1,6 +1,6 @@
-import prisma from '../../lib/prisma'
-import { getFlightPrice } from '../../lib/flights'
-import { sendPriceAlert } from '../../lib/email'
+import prisma from '../../../lib/prisma'
+import { getFlightPrice } from '../../../lib/flights'
+import { sendPriceAlert } from '../../../lib/email'
 
 export default async function handler(req, res) {
   // Verify cron secret to prevent unauthorized calls
