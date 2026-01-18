@@ -1,126 +1,162 @@
-# Flight Alert Discord Bot!!
+# ✈️ TrackRoth
 
-A Discord bot that tracks flight prices and alerts you when they drop.
+Flight price tracking with web dashboard + Discord bot.
 
 ## Features
 
-- Track multiple flight routes per user
-- Set target prices for alerts
-- Automatic price checks on a schedule
-- Get pinged when prices drop >5% or hit your target
-- SQLite database for persistent storage
+- **Web App**: Landing page, Google/email login, dashboard
+- **Discord Bot**: Track flights with `!track JFK LAX 2026-03-15`
+- **Shared Database**: Alerts sync between web and Discord
+- **Email + Discord Alerts**: Get notified on price drops
 
-## Commands
+## Tech Stack
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `!track <origin> <dest> <date> [max_price]` | Start tracking a flight | `!track JFK LAX 2025-03-15 300` |
-| `!list` | Show your active alerts | `!list` |
-| `!check` | Manually check all your prices | `!check` |
-| `!remove <id>` | Remove an alert | `!remove 3` |
-| `!flighthelp` | Show help | `!flighthelp` |
+- Next.js 14 (web)
+- Python Discord.py (bot)
+- PostgreSQL (shared database)
+- Prisma ORM
+- SerpApi (Google Flights data)
+- Resend (emails)
 
-## Setup
+## Project Structure
 
-### 1. Create a Discord Bot
+```
+/trackroth
+  /bot                 # Discord bot (Python)
+    bot.py
+    Dockerfile
+    requirements.txt
+  /pages               # Next.js web app
+  /lib                 # Shared utilities
+  /prisma              # Database schema
+```
 
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Click "New Application" → name it → Create
-3. Go to "Bot" in the sidebar
-4. Click "Reset Token" and copy your token (save it!)
-5. Enable these Privileged Gateway Intents:
-   - MESSAGE CONTENT INTENT 
-6. Go to "OAuth2" → "URL Generator"
-   - Scopes: `bot`
-   - Bot Permissions: `Send Messages`, `Embed Links`, `Read Message History`
-7. Copy the generated URL and open it to invite the bot to your server
+## Deploy to Railway
 
-### 2. Get Amadeus API Credentials
+You'll deploy **2 services** from the same repo:
 
-You need both:
-- API Key
-- API Secret
+### 1. Create Railway Project
 
-### 3. Deploy
+1. Go to [railway.app](https://railway.app)
+2. New Project → Deploy from GitHub repo
 
-#### Option A: Railway (Recommended - Free Tier)
+### 2. Add PostgreSQL Database
 
-1. Push this code to a GitHub repository
-2. Go to [railway.app](https://railway.app) and sign in with GitHub
-3. Click "New Project" → "Deploy from GitHub repo"
-4. Select your repository
-5. Add environment variables in Railway dashboard:
-   - `DISCORD_TOKEN`
-   - `AMADEUS_API_KEY`
-   - `AMADEUS_API_SECRET`
-   - `CHECK_INTERVAL_MINUTES` (optional, default 60)
-6. Railway will auto-deploy!
+1. Click "New" → "Database" → "PostgreSQL"
+2. Railway sets `DATABASE_URL` automatically
 
-#### Option B: Render (Free Tier)
+### 3. Deploy Web App (Service 1)
 
-1. Push code to GitHub
-2. Go to [render.com](https://render.com)
-3. New → Web Service → Connect your repo
-4. Environment: Docker
-5. Add environment variables
-6. Deploy
+Railway auto-detects Next.js and deploys it. Set these variables:
 
-#### Option C: Fly.io (Free Tier)
+```
+NEXTAUTH_URL=https://your-web-app.railway.app
+NEXTAUTH_SECRET=<random-32-char-string>
 
-1. Install flyctl: `curl -L https://fly.io/install.sh | sh`
-2. Login: `fly auth login`
-3. Launch: `fly launch`
-4. Set secrets:
-   ```bash
-   fly secrets set DISCORD_TOKEN=xxx
-   fly secrets set AMADEUS_API_KEY=xxx
-   fly secrets set AMADEUS_API_SECRET=xxx
-   ```
-5. Deploy: `fly deploy`
+GOOGLE_CLIENT_ID=<from-google-cloud-console>
+GOOGLE_CLIENT_SECRET=<from-google-cloud-console>
 
-#### Option D: Run Locally (Testing)
+EMAIL_SERVER_HOST=smtp.resend.com
+EMAIL_SERVER_PORT=465
+EMAIL_SERVER_USER=resend
+EMAIL_SERVER_PASSWORD=<your-resend-api-key>
+EMAIL_FROM=TrackRoth <noreply@yourdomain.com>
+
+RESEND_API_KEY=<your-resend-api-key>
+SERPAPI_KEY=<your-serpapi-key>
+CRON_SECRET=<random-string>
+```
+
+### 4. Deploy Discord Bot (Service 2)
+
+1. In Railway, click "New" → "GitHub Repo" (same repo)
+2. Go to Settings → change **Root Directory** to `/bot`
+3. Set these variables:
+
+```
+DISCORD_TOKEN=<your-discord-bot-token>
+SERPAPI_KEY=<your-serpapi-key>
+DATABASE_URL=<copy-from-postgres-service>
+CHECK_INTERVAL_MINUTES=360
+```
+
+**Important:** Copy the `DATABASE_URL` from the PostgreSQL service so the bot shares the same database.
+
+### 5. Run Database Migration
+
+In Railway terminal (web service):
 
 ```bash
-# Install dependencies
+npx prisma db push
+```
+
+### 6. Setup External Services
+
+**Google OAuth:**
+1. [Google Cloud Console](https://console.cloud.google.com) → Create project
+2. APIs & Services → Credentials → OAuth 2.0 Client
+3. Add redirect: `https://your-app.railway.app/api/auth/callback/google`
+
+**Resend (emails):**
+1. Sign up at [resend.com](https://resend.com)
+2. Get API key, optionally add custom domain
+
+**Discord Bot:**
+1. [Discord Developer Portal](https://discord.com/developers/applications)
+2. Create app → Bot → Get token
+3. Enable MESSAGE CONTENT INTENT
+4. Invite to server with OAuth2 URL Generator
+
+### 7. Setup Cron for Price Checking
+
+The web app needs a cron job to check prices. Use [cron-job.org](https://cron-job.org):
+
+- URL: `https://your-app.railway.app/api/cron/check-prices`
+- Header: `Authorization: Bearer YOUR_CRON_SECRET`
+- Schedule: Every 6 hours
+
+(The Discord bot runs its own background loop, so this cron is just for email alerts)
+
+## Discord Commands
+
+| Command | Description |
+|---------|-------------|
+| `!track JFK LAX 2026-03-15` | Track a flight |
+| `!track JFK LAX 2026-03-15 300` | Track with target price |
+| `!list` | Show your alerts |
+| `!check` | Check prices now |
+| `!remove <id>` | Remove an alert |
+| `!flighthelp` | Show help |
+
+## How It Works
+
+1. Users create alerts via web or Discord
+2. Both write to the same PostgreSQL database
+3. Price checker runs every 6 hours
+4. Web users get email alerts
+5. Discord users get DM alerts
+
+## API Limits
+
+- SerpApi free tier: 250 searches/month
+- At 6-hour intervals: ~120 checks/alert/month
+- Budget for ~2 alerts on free tier
+
+## Local Development
+
+```bash
+# Install web dependencies
+npm install
+
+# Setup database
+npx prisma db push
+
+# Run web dev server
+npm run dev
+
+# Run Discord bot (separate terminal)
+cd bot
 pip install -r requirements.txt
-
-# Create .env file
-cp .env.example .env
-# Edit .env with your credentials
-
-# Run
 python bot.py
 ```
 
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DISCORD_TOKEN` | Yes | Your Discord bot token |
-| `AMADEUS_API_KEY` | Yes | Amadeus API key |
-| `AMADEUS_API_SECRET` | Yes | Amadeus API secret |
-| `CHECK_INTERVAL_MINUTES` | No | How often to check prices (default: 60) |
-
-## Notes
-
-- Uses 3-letter IATA airport codes (JFK, LAX, LHR, CDG, etc.)
-- Dates must be in YYYY-MM-DD format
-- Amadeus free tier has rate limits (~2000 calls/month)
-- Bot alerts when:
-  - Price drops below your max_price target
-  - Price drops more than 5% since last check
-
-## Troubleshooting
-
-**Bot not responding?**
-- Make sure MESSAGE CONTENT INTENT is enabled in Discord Developer Portal
-- Check that bot has permissions to read/send in the channel
-
-**No price data?**
-- Verify your Amadeus credentials are correct
-- Check if the airport codes are valid
-- Amadeus may not have data for all routes
-
-**Rate limited?**
-- Increase `CHECK_INTERVAL_MINUTES` 
-- Reduce number of tracked flights
